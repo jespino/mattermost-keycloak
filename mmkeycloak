@@ -2,6 +2,12 @@
 
 import subprocess
 import click
+import json
+import os
+import os.path
+import shutil
+
+DEFAULT_PORT = "8888"
 
 def container_exists(container_name):
     result = subprocess.run(["docker", "ps", "-a"], capture_output=True)
@@ -21,19 +27,19 @@ def cli():
 
 @cli.command()
 @click.argument("container_name", default="mattermost-saml")
-@click.option("--exposed-port", default="8888")
-def start(container_name, exposed_port):
+@click.option("--port", default=DEFAULT_PORT)
+def start(container_name, port):
     if not container_exists(container_name):
-        print("Creating container...")
+        print("Creating container...", end="", flush=True)
 
-        result = subprocess.run(["docker", "run", "--name", container_name, "-p", "{}:8080".format(exposed_port), "--link", "mattermost-openldap", "-d", "jboss/keycloak:3.4.3.Final"], capture_output=True)
+        result = subprocess.run(["docker", "run", "--name", container_name, "-p", "{}:8080".format(port), "--link", "mattermost-openldap", "-d", "jboss/keycloak:3.4.3.Final"], capture_output=True)
         if result.returncode != 0:
             print("ERROR")
             print(result.stderr)
             return
         print("OK")
 
-        print("Configuring container...")
+        print("Configuring container...", end="", flush=True)
         result = subprocess.run(["docker", "exec", "-ti", "mattermost-saml", "bash", "-c", "keycloak/bin/add-user-keycloak.sh -u admin -p Password1"])
         if result.returncode != 0:
             print("ERROR")
@@ -62,7 +68,7 @@ def start(container_name, exposed_port):
         print("OK")
 
     if not container_is_running(container_name):
-        print("Running container...")
+        print("Running container...", end="", flush=True)
         result = subprocess.run(["docker", "start", container_name], capture_output=True)
         if result.returncode == 0:
             print("OK")
@@ -78,7 +84,7 @@ def stop(container_name):
         print("The container is not running")
         return
 
-    print("Stoping container...")
+    print("Stoping container...", end="", flush=True)
     result = subprocess.run(["docker", "stop", container_name], capture_output=True)
     if result.returncode == 0:
         print("OK")
@@ -93,7 +99,7 @@ def clean(container_name):
         print("Container does not exists")
 
     if container_is_running(container_name):
-        print("Stoping container...")
+        print("Stoping container...", end="", flush=True)
         result = subprocess.run(["docker", "stop", container_name], capture_output=True)
         if result.returncode == 0:
             print("OK")
@@ -102,7 +108,7 @@ def clean(container_name):
             print(result.stderr)
             return
 
-    print("Removing container...")
+    print("Removing container...", end="", flush=True)
     result = subprocess.run(["docker", "rm", container_name], capture_output=True)
     if result.returncode == 0:
         print("OK")
@@ -110,6 +116,82 @@ def clean(container_name):
         print("ERROR")
         print(result.stderr)
     return
+
+@cli.command()
+@click.argument("config-directory", default="../mattermost-server/config")
+@click.option("--port", default=DEFAULT_PORT)
+def enable_saml(config_directory, port):
+    with open(os.path.join(config_directory, "config.json"), "r") as fd:
+        config = json.load(fd)
+
+    config["SamlSettings"]["Enable"] = True
+    config["SamlSettings"]["EnableSyncWithLdap"] = True
+    config["SamlSettings"]["Verify"] =True
+    config["SamlSettings"]["Encrypt"] = False
+    config["SamlSettings"]["IdpUrl"] = False
+    config["SamlSettings"]["IdpUrl"] = "http://dockerhost:{}/auth/realms/master/protocol/saml".format(port)
+    config["SamlSettings"]["IdpDescriptorUrl"] = "http://localhost:8065/login/sso/saml"
+    config["SamlSettings"]["AssertionConsumerServiceURL"] = "http://localhost:8065/login/sso/saml"
+    config["SamlSettings"]["ScopingIDPProviderId"] = ""
+    config["SamlSettings"]["ScopingIDPName"] = ""
+    config["SamlSettings"]["IdpCertificateFile"] = "keycloak_cert.pem"
+    config["SamlSettings"]["PublicCertificateFile"] = ""
+    config["SamlSettings"]["PrivateKeyFile"] = ""
+    config["SamlSettings"]["IdAttribute"] = "id"
+    config["SamlSettings"]["FirstNameAttribute"] = "firstName"
+    config["SamlSettings"]["LastNameAttribute"] = "lastName"
+    config["SamlSettings"]["EmailAttribute"] = "email"
+    config["SamlSettings"]["UsernameAttribute"] = "username"
+
+    with open(os.path.join(config_directory, "config.json"), "w") as fd:
+        json.dump(config, fd, indent=4)
+    shutil.copyfile("keycloak_cert.pem", os.path.join(config_directory, "keycloak_cert.pem"))
+
+@cli.command()
+@click.argument("config-directory", default="../mattermost-server/config/")
+def disable_saml(config_directory):
+    with open(os.path.join(config_directory, "config.json"), "r") as fd:
+        config = json.load(fd)
+
+    config["SamlSettings"] = {
+         "Enable": False,
+         "EnableSyncWithLdap": False,
+         "Verify": True,
+         "Encrypt": True,
+         "IdpUrl": "",
+         "IdpDescriptorUrl": "",
+         "AssertionConsumerServiceURL": "",
+         "ScopingIDPProviderId": "",
+         "ScopingIDPName": "",
+         "IdpCertificateFile": "",
+         "PublicCertificateFile": "",
+         "PrivateKeyFile": "",
+         "FirstNameAttribute": "",
+         "LastNameAttribute": "",
+         "EmailAttribute": "",
+         "UsernameAttribute": "",
+         "NicknameAttribute": "",
+         "LocaleAttribute": "",
+         "PositionAttribute": "",
+         "LoginButtonText": "With SAML",
+         "LoginButtonColor": "#34a28b",
+         "LoginButtonBorderColor": "#2389D7",
+         "LoginButtonTextColor": "#ffffff"
+    }
+
+    with open(os.path.join(config_directory, "config.json"), "w") as fd:
+         json.dump(config, fd, indent=4)
+    os.remove(os.path.join(config_directory, "keycloak_cert.pem"))
+
+@cli.command()
+@click.argument("container_name", default="mattermost-saml")
+def shell(container_name):
+    subprocess.run(["docker", "exec", "-i", "-t", container_name, "/bin/bash"])
+
+@cli.command()
+@click.argument("container_name", default="mattermost-saml")
+def log(container_name):
+    subprocess.run(["docker", "exec", "-i", "-t", container_name, "/bin/tail", "-f", "/opt/jboss/keycloak/standalone/log/server.log"])
 
 if __name__ == "__main__":
     cli()

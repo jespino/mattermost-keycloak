@@ -165,6 +165,17 @@
                 "user.attribute": "username",
                 "friendly.name": "username"
             }
+        },
+        {
+            "name": "id",
+            "protocol": "saml",
+            "protocolMapper": "saml-user-property-mapper",
+            "consentRequired": false,
+            "config": {
+                "attribute.nameformat": "Basic",
+                "user.attribute": "id",
+                "friendly.name": "id"
+            }
         }
     ],
     "useTemplateConfig": false,
