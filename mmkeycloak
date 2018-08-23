@@ -1,0 +1,115 @@
+#!/usr/bin/env python
+
+import subprocess
+import click
+
+def container_exists(container_name):
+    result = subprocess.run(["docker", "ps", "-a"], capture_output=True)
+    if container_name.lower() in result.stdout.decode('utf-8').lower():
+        return True
+    return False
+
+def container_is_running(container_name):
+    result = subprocess.run(["docker", "ps"], capture_output=True)
+    if container_name.lower() in result.stdout.decode('utf-8').lower():
+        return True
+    return False
+
+@click.group()
+def cli():
+    pass
+
+@cli.command()
+@click.argument("container_name", default="mattermost-saml")
+@click.option("--exposed-port", default="8888")
+def start(container_name, exposed_port):
+    if not container_exists(container_name):
+        print("Creating container...")
+
+        result = subprocess.run(["docker", "run", "--name", container_name, "-p", "{}:8080".format(exposed_port), "--link", "mattermost-openldap", "-d", "jboss/keycloak:3.4.3.Final"], capture_output=True)
+        if result.returncode != 0:
+            print("ERROR")
+            print(result.stderr)
+            return
+        print("OK")
+
+        print("Configuring container...")
+        result = subprocess.run(["docker", "exec", "-ti", "mattermost-saml", "bash", "-c", "keycloak/bin/add-user-keycloak.sh -u admin -p Password1"])
+        if result.returncode != 0:
+            print("ERROR")
+            print(result.stderr)
+            return
+        result = subprocess.run(["docker", "cp", "keycloak-client.json", "mattermost-saml:/opt/jboss/keycloak/keycloak-client.json"])
+        if result.returncode != 0:
+            print("ERROR")
+            print(result.stderr)
+            return
+        result = subprocess.run(["docker", "cp", "keycloak-ldap.json", "mattermost-saml:/opt/jboss/keycloak/keycloak-ldap.json"])
+        if result.returncode != 0:
+            print("ERROR")
+            print(result.stderr)
+            return
+        result = subprocess.run(["docker", "exec", "-ti", "mattermost-saml", "bash", "-c", "keycloak/bin/kcadm.sh create clients --server http://localhost:8080/auth --user admin --password Password1 --realm master -f /opt/jboss/keycloak/keycloak-client.json"])
+        if result.returncode != 0:
+            print("ERROR")
+            print(result.stderr)
+            return
+        result = subprocess.run(["docker", "exec", "-ti", "mattermost-saml", "bash", "-c", "keycloak/bin/kcadm.sh create components --server http://localhost:8080/auth --user admin --password Password1 --realm master -f /opt/jboss/keycloak/keycloak-ldap.json"])
+        if result.returncode != 0:
+            print("ERROR")
+            print(result.stderr)
+            return
+        print("OK")
+
+    if not container_is_running(container_name):
+        print("Running container...")
+        result = subprocess.run(["docker", "start", container_name], capture_output=True)
+        if result.returncode == 0:
+            print("OK")
+        else:
+            print("ERROR")
+            print(result.stderr)
+        return
+
+@cli.command()
+@click.argument("container_name", default="mattermost-saml")
+def stop(container_name):
+    if not container_is_running(container_name):
+        print("The container is not running")
+        return
+
+    print("Stoping container...")
+    result = subprocess.run(["docker", "stop", container_name], capture_output=True)
+    if result.returncode == 0:
+        print("OK")
+    else:
+        print("ERROR")
+        print(result.stderr)
+
+@cli.command()
+@click.argument("container_name", default="mattermost-saml")
+def clean(container_name):
+    if not container_exists(container_name):
+        print("Container does not exists")
+
+    if container_is_running(container_name):
+        print("Stoping container...")
+        result = subprocess.run(["docker", "stop", container_name], capture_output=True)
+        if result.returncode == 0:
+            print("OK")
+        else:
+            print("ERROR")
+            print(result.stderr)
+            return
+
+    print("Removing container...")
+    result = subprocess.run(["docker", "rm", container_name], capture_output=True)
+    if result.returncode == 0:
+        print("OK")
+    else:
+        print("ERROR")
+        print(result.stderr)
+    return
+
+if __name__ == "__main__":
+    cli()
